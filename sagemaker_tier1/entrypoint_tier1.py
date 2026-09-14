@@ -44,29 +44,53 @@ import traceback
 
 import mmengine
 
-# Packages imported by pipeline/ and scripts/ that are missing from this
-# fork's requirements.txt (verified by grep: mmengine, deep_translator and
-# jsonpickle are used in dataset/load_dataset.py, pipeline/run_pipeline.py,
-# scripts/multi_test.py but absent from requirements.txt). Installing them
-# is necessary for the official code to run at all; it changes no method
-# code. See CHANGES.md.
-MISSING_DEPS = ["mmengine==0.10.4", "deep-translator==1.11.4", "jsonpickle==3.2.2"]
+# requirements.txt in this fork is NOT installed on the SageMaker container.
+# Verified reason (not a guess): SageMaker's PyTorch estimator auto-runs
+# `pip install -r requirements.txt` from source_dir before the entry point,
+# and this fails outright -- litellm==1.40.9 has been yanked from PyPI and
+# is no longer installable by anyone, on any machine, as of this run. That
+# is independent of instance type or CUDA version (confirmed: the same
+# ERROR: No matching distribution found for litellm==1.40.9 is pip's own
+# resolver failing before any package is even downloaded). launch_tier1.py
+# excludes requirements.txt from the staged upload so SageMaker's
+# auto-install step is skipped entirely; this function installs a working
+# set instead. Every other pin is kept as specified in requirements.txt;
+# only litellm is left unpinned (nothing in pipeline/ or scripts/ actually
+# calls into litellm's API unless the "llamaguard2" jailbreak_eval
+# methodology is selected, which none of this fork's configs use -- it is
+# only imported at module level in pipeline/submodules/evaluate_jailbreak.py
+# and must resolve for that import to succeed). mmengine, deep-translator
+# and jsonpickle are added because requirements.txt never listed them at
+# all, despite being imported by dataset/load_dataset.py,
+# pipeline/run_pipeline.py and scripts/multi_test.py. See CHANGES.md.
+DEPS = [
+    "mmengine==0.10.4", "deep-translator==1.11.4", "jsonpickle==3.2.2",
+    "vllm==0.5.0", "vllm-flash-attn==2.5.9", "litellm",
+    "transformers==4.44.2", "transformers-stream-generator==0.0.5",
+    "einops==0.8.0", "jaxtyping==0.2.29", "sentencepiece==0.2.0",
+    "python-dotenv==1.0.1",
+]
 
 
 def pip_install_missing():
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q"] + MISSING_DEPS, check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q"] + DEPS, check=True)
 
 
 def build_source_config(model_path: str, source_lang: str, model_alias: str) -> mmengine.Config:
+    # Prefer a model-and-language-specific template if one is already
+    # checked in (de/ja/ko/ru/th/yo/zh have one for Qwen2.5-7B-Instruct from
+    # the upstream authors' own runs); otherwise fall back to
+    # sagemaker_tier1/en.yaml as a generic hyperparameter template for ANY
+    # source language -- every field in it besides lang/source_lang/
+    # artifact_path/model_path is language-agnostic (n_train, kl thresholds,
+    # batch_size, etc.), and all four of those fields are overwritten below
+    # regardless of which template was loaded. (Originally this fallback was
+    # asserted to only apply to source_lang=="en"; relaxed to any language
+    # once we needed a template for a model -- gemma-2b-it -- that has no
+    # checked-in per-language configs at all yet.)
     template_path = f"pipeline/runs/{model_alias}/{source_lang}/{source_lang}.yaml"
     if not os.path.exists(template_path):
         template_path = os.path.join(os.path.dirname(__file__), "en.yaml")
-        assert source_lang == "en", (
-            f"No checked-in config template for source_lang={source_lang!r} "
-            f"and it isn't 'en' (the only language with a fallback template "
-            f"in sagemaker_tier1/). Add pipeline/runs/{model_alias}/{source_lang}/"
-            f"{source_lang}.yaml before running this source language."
-        )
     cfg = mmengine.Config.fromfile(template_path)
     cfg.model_path = model_path
     cfg.source_lang = source_lang
@@ -80,7 +104,7 @@ def build_source_config(model_path: str, source_lang: str, model_alias: str) -> 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model_path", default="Qwen/Qwen2.5-7B-Instruct")
+    p.add_argument("--model_path", default="google/gemma-2b-it")
     p.add_argument("--source_lang", required=True)
     p.add_argument("--target_langs", required=True, help="comma-separated language codes")
     args = p.parse_args()

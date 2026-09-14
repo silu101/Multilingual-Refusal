@@ -37,12 +37,35 @@ from sagemaker.pytorch import PyTorch
 # directory you point it at, so we stage a pruned copy rather than pointing
 # it at the working tree directly. Nothing under output/ or .git/ is
 # modified or deleted by this -- only the staged rsync copy excludes them.
-EXCLUDE_FROM_UPLOAD = [".git", "output", "__pycache__", ".pytest_cache"]
+#
+# requirements.txt is ALSO excluded: SageMaker's PyTorch estimator
+# auto-installs source_dir/requirements.txt before the entry point runs,
+# and this fork's requirements.txt cannot install at all right now --
+# litellm==1.40.9 has been yanked from PyPI (confirmed via a real failed
+# job: "ERROR: No matching distribution found for litellm==1.40.9"), so
+# `pip install -r requirements.txt` fails on any machine today, not just
+# SageMaker. entrypoint_tier1.py installs a working dependency set itself
+# instead (same pins throughout except litellm, left unpinned). The
+# original requirements.txt file itself is untouched in the repo. See
+# CHANGES.md.
+EXCLUDE_FROM_UPLOAD = [".git", "output", "__pycache__", ".pytest_cache", "requirements.txt"]
 
 ROLE_ARN = "arn:aws:iam::344977996863:role/safety-layers-sagemaker-execution-role"
 REGION = "us-east-1"
-INSTANCE_TYPE = "ml.g6e.xlarge"  # 48GB L40S -- confirmed-available instance family
-MODEL_PATH = "Qwen/Qwen2.5-7B-Instruct"
+DEFAULT_INSTANCE_TYPE = "ml.g6e.xlarge"  # 48GB L40S, single GPU -- our job needs
+    # Qwen2.5-7B-Instruct and WildGuard (~7B) resident on GPU simultaneously
+    # (the official evaluate_jailbreak() code doesn't unload the target model
+    # before loading WildGuard), ~28-30GB combined in bf16. A single 24GB GPU
+    # (g5.xlarge/2xlarge/4xlarge/8xlarge/16xlarge) will likely OOM. g5.12xlarge
+    # (4x A10G, 96GB total) would also work: pipeline/model_utils/qwen2_model.py
+    # and evaluators/wildguard.py both already load with device_map="auto", so
+    # accelerate will shard each model across the 4 GPUs automatically -- no
+    # code change needed for that path either.
+DEFAULT_MODEL_PATH = "google/gemma-2b-it"  # switched from Qwen2.5-7B-Instruct by
+    # user decision, to fit single-24GB-GPU instances (g5.xlarge, confirmed
+    # live capacity) instead of requiring the scarcer 48GB/multi-GPU tiers.
+    # gemma-2b-it is one of the paper's own benchmarked models (Fig. 1), so
+    # this is a different valid data point from the paper, not a deviation.
 
 ALL_LANGS = "ar,de,en,es,fr,it,ja,ko,nl,pl,ru,th,yo,zh"
 
@@ -66,14 +89,14 @@ def stage_source_dir(repo_root: Path) -> str:
     return str(staging)
 
 
-def launch(source_lang: str, target_langs: str, max_run_hours: float, session: sagemaker.Session, source_dir: str):
+def launch(source_lang: str, target_langs: str, max_run_hours: float, session: sagemaker.Session, source_dir: str, instance_type: str, model_path: str):
     estimator = PyTorch(
         entry_point="sagemaker_tier1/entrypoint_tier1.py",
         source_dir=source_dir,
         role=ROLE_ARN,
         framework_version="2.3",
         py_version="py311",
-        instance_type=INSTANCE_TYPE,
+        instance_type=instance_type,
         instance_count=1,
         volume_size=100,
         sagemaker_session=session,
@@ -84,13 +107,13 @@ def launch(source_lang: str, target_langs: str, max_run_hours: float, session: s
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         },
         hyperparameters={
-            "model_path": MODEL_PATH,
+            "model_path": model_path,
             "source_lang": source_lang,
             "target_langs": target_langs,
         },
     )
     estimator.fit(wait=False)
-    print(f"[{source_lang}] submitted: {estimator.latest_training_job.name}")
+    print(f"[{source_lang}] submitted: {estimator.latest_training_job.name} (model={model_path})")
     return estimator
 
 
@@ -99,6 +122,8 @@ def main():
     p.add_argument("--source_langs", default="en,de,zh,th")
     p.add_argument("--target_langs", default=ALL_LANGS)
     p.add_argument("--max_run_hours", type=float, default=8.0)
+    p.add_argument("--instance_type", default=DEFAULT_INSTANCE_TYPE)
+    p.add_argument("--model_path", default=DEFAULT_MODEL_PATH)
     args = p.parse_args()
 
     session = sagemaker.Session(boto_session=boto3.Session(region_name=REGION))
@@ -108,7 +133,7 @@ def main():
 
     jobs = []
     for source_lang in args.source_langs.split(","):
-        jobs.append(launch(source_lang.strip(), args.target_langs, args.max_run_hours, session, source_dir))
+        jobs.append(launch(source_lang.strip(), args.target_langs, args.max_run_hours, session, source_dir, args.instance_type, args.model_path))
 
     print("\nAll jobs submitted (wait=False). Job names:")
     for e in jobs:
