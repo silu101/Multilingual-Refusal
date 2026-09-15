@@ -44,20 +44,28 @@ methodology deviation.
      from the staged upload so SageMaker's automatic
      `pip install -r requirements.txt` pre-step (which runs before the
      entry point and would otherwise hard-fail the job) never triggers.
-     `entrypoint_tier1.py` instead installs every other pin from
-     `requirements.txt` verbatim (`vllm==0.5.0`, `vllm-flash-attn==2.5.9`,
-     `transformers==4.44.2`, etc.) and leaves only `litellm` unpinned.
-     Nothing in `pipeline/` or `scripts/` actually calls litellm's API
-     unless the `"llamaguard2"` jailbreak-eval methodology is selected,
-     which no config in this fork uses — litellm is only imported at
-     module level in `pipeline/submodules/evaluate_jailbreak.py` and must
-     resolve for that import to succeed, nothing more. The original
-     `requirements.txt` file itself is untouched in the repo.
+     `sagemaker_tier1/requirements_fixed.txt` is a full copy of
+     `requirements.txt` (`diff` the two files to confirm) with exactly two
+     kinds of edits: the `litellm==1.40.9` line changed to unpinned
+     `litellm`, and three packages appended that were missing entirely (see
+     point 2). Nothing in `pipeline/` or `scripts/` actually calls
+     litellm's API unless the `"llamaguard2"` jailbreak-eval methodology is
+     selected, which no config in this fork uses — litellm is only
+     imported at module level in
+     `pipeline/submodules/evaluate_jailbreak.py` and must resolve for that
+     import to succeed, nothing more. `entrypoint_tier1.py` installs from
+     `requirements_fixed.txt`; the original `requirements.txt` file itself
+     is untouched in the repo. (An earlier version of this fix hand-picked
+     a subset of packages instead of using the full corrected file, and
+     that subset missed `datasets` — imported by
+     `pipeline/submodules/evaluate_loss.py`, itself imported by
+     `pipeline/run_pipeline.py` — which only surfaced via a second failed
+     job. Installing the full file avoids that whole class of bug.)
   2. **Missing dependencies**: `requirements.txt` never listed `mmengine`,
      `deep-translator`, or `jsonpickle` at all, even though
      `dataset/load_dataset.py`, `pipeline/run_pipeline.py`, and
      `scripts/multi_test.py` import them. Pinned versions of these three
-     are installed alongside the `requirements.txt`-derived set above.
+     are appended to `requirements_fixed.txt`.
   3. **Path-naming mismatch (pre-existing bug in the official repo, not
      introduced here)**: `pipeline/run_pipeline.py`'s
      `select_and_save_direction()` saves the selected direction as

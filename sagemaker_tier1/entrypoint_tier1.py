@@ -52,36 +52,39 @@ import traceback
 # the `-> mmengine.Config` type hint from being evaluated at module-load
 # time (it'd otherwise NameError before the local import ever runs).
 
-# requirements.txt in this fork is NOT installed on the SageMaker container.
-# Verified reason (not a guess): SageMaker's PyTorch estimator auto-runs
-# `pip install -r requirements.txt` from source_dir before the entry point,
-# and this fails outright -- litellm==1.40.9 has been yanked from PyPI and
-# is no longer installable by anyone, on any machine, as of this run. That
-# is independent of instance type or CUDA version (confirmed: the same
-# ERROR: No matching distribution found for litellm==1.40.9 is pip's own
-# resolver failing before any package is even downloaded). launch_tier1.py
-# excludes requirements.txt from the staged upload so SageMaker's
-# auto-install step is skipped entirely; this function installs a working
-# set instead. Every other pin is kept as specified in requirements.txt;
-# only litellm is left unpinned (nothing in pipeline/ or scripts/ actually
-# calls into litellm's API unless the "llamaguard2" jailbreak_eval
-# methodology is selected, which none of this fork's configs use -- it is
-# only imported at module level in pipeline/submodules/evaluate_jailbreak.py
-# and must resolve for that import to succeed). mmengine, deep-translator
-# and jsonpickle are added because requirements.txt never listed them at
-# all, despite being imported by dataset/load_dataset.py,
-# pipeline/run_pipeline.py and scripts/multi_test.py. See CHANGES.md.
-DEPS = [
-    "mmengine==0.10.4", "deep-translator==1.11.4", "jsonpickle==3.2.2",
-    "vllm==0.5.0", "vllm-flash-attn==2.5.9", "litellm",
-    "transformers==4.44.2", "transformers-stream-generator==0.0.5",
-    "einops==0.8.0", "jaxtyping==0.2.29", "sentencepiece==0.2.0",
-    "python-dotenv==1.0.1",
-]
+# requirements.txt in this fork is NOT installed on the SageMaker container
+# as-is. Verified reason (not a guess): SageMaker's PyTorch estimator
+# auto-runs `pip install -r requirements.txt` from source_dir before the
+# entry point, and this fails outright -- litellm==1.40.9 has been yanked
+# from PyPI and is no longer installable by anyone, on any machine, as of
+# this run. That is independent of instance type or CUDA version (confirmed:
+# the same "ERROR: No matching distribution found for litellm==1.40.9" is
+# pip's own resolver failing before any package is even downloaded).
+#
+# Fix: sagemaker_tier1/requirements_fixed.txt is a full copy of
+# requirements.txt with exactly two kinds of edits: (1) the `litellm==1.40.9`
+# line changed to unpinned `litellm` (nothing in pipeline/ or scripts/
+# actually calls litellm's API unless the "llamaguard2" jailbreak_eval
+# methodology is selected, which no config in this fork uses -- it's only
+# imported at module level in pipeline/submodules/evaluate_jailbreak.py and
+# must resolve for that import to succeed, nothing more), and (2) three
+# packages appended that requirements.txt never listed at all despite being
+# imported by dataset/load_dataset.py, pipeline/run_pipeline.py and
+# scripts/multi_test.py: mmengine, deep-translator, jsonpickle. Every other
+# pin is identical to the original file (diff the two to confirm). An
+# earlier version of this function hand-picked a subset of packages instead
+# of using the full corrected file, which missed several imports actually
+# needed by pipeline/run_pipeline.py's dependency chain (e.g. `datasets`)
+# and had to be fixed via repeated trial-and-error on real SageMaker jobs --
+# using the full file avoids that class of bug entirely. launch_tier1.py
+# excludes the original requirements.txt from the staged upload so
+# SageMaker's broken auto-install step is skipped; this function installs
+# from requirements_fixed.txt instead. See CHANGES.md.
+REQUIREMENTS_FIXED = os.path.join(os.path.dirname(__file__), "requirements_fixed.txt")
 
 
 def pip_install_missing():
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q"] + DEPS, check=True)
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", REQUIREMENTS_FIXED], check=True)
 
 
 def build_source_config(model_path: str, source_lang: str, model_alias: str) -> "mmengine.Config":
