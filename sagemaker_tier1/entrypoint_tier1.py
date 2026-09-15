@@ -148,6 +148,8 @@ def main():
     # which would break under that invocation style.
     p.add_argument("--skip_addition", type=str, default="false",
                     help="'true' to skip generating/evaluating the activation-addition completions (Figure 3, not part of Tier-1's ablation-only scope). Default 'false': generate them, official behavior.")
+    p.add_argument("--wildguard_batch_size", type=int, default=1,
+                    help="Completions per WildGuard generate() call (see evaluators/wildguard.py). Default 1 = original unbatched behavior.")
     args = p.parse_args()
     args.skip_addition = args.skip_addition.lower() in ("true", "1", "yes")
 
@@ -160,6 +162,7 @@ def main():
 
     model_alias = os.path.basename(args.model_path)
     cfg = build_source_config(args.model_path, args.source_lang, model_alias)
+    cfg.wildguard_batch_size = args.wildguard_batch_size
     tmp_cfg_path = tempfile.mktemp(suffix=".yaml")
     cfg.dump(tmp_cfg_path)
 

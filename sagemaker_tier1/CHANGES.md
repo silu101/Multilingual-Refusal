@@ -53,6 +53,42 @@ real measured GPU-hours it took, are recorded here once the smoke test
 establishes real per-pair timing (rather than guessed from the Qwen-based
 estimate, which doesn't directly transfer to gemma-2b-it + WildGuard).
 
+## Batched WildGuard scoring (evaluators/wildguard.py)
+
+Even after the two cuts above (100 prompts/language, ablation+baseline
+only), a real end-to-end smoke test (`mr-tier1-en-2026-09-15-02-51-09-581`)
+measured WildGuard's own scoring loop at **~12.7 seconds per completion**,
+one at a time — `WildGuardEvaluator.evaluate_all()`'s original
+implementation calls `self.guard.generate()` in a plain Python `for`
+loop, no batching. At that rate the full 56-pair sweep (200 WildGuard
+calls/pair × 56 pairs, plus `run_pipeline()`'s own 228-item
+harmful+jailbreakbench self-eval × 4 source languages) comes to
+**~42-43 GPU-hours** — about 8.5× over the 5-hour budget, and the
+dominant cost by far (far larger than generation time or translation
+calls).
+
+Added a `cfg.wildguard_batch_size` opt-in (default `1`, i.e. the exact
+original one-at-a-time behavior for anyone not setting it) to
+`evaluate_all()`: completions are grouped into batches, tokenized together
+with left-padding (`padding_side="left"` was already set in `__init__`,
+the correct convention for batched decoder-only generation — it aligns
+every sequence's real content to end at the same position, so slicing
+every row of the batch's output at the same `input_len` correctly strips
+prompt+padding for all of them), and run through one `generate()` call per
+batch instead of one call per item. The per-item prompt template
+(`self.instruction_format`), output-parsing logic, and classification
+thresholds (`self.classify_map`) are byte-identical to the original —
+batching changes only how many completions share one GPU call, not what
+gets classified or how. `entrypoint_tier1.py`'s `--wildguard_batch_size`
+flag sets it for our runs; `scripts/multi_test.py` and `pipeline/
+run_pipeline.py` both already pass `cfg` straight through to
+`evaluate_jailbreak()` → `WildGuardEvaluator.evaluate_all()`, so no
+further wiring was needed for the batch size to reach it. Real
+measured speedup and the batch size actually used are recorded once
+verified on a live job (a batch size that's too large risks OOM given
+gemma-2b-it and WildGuard, ~7B, are already resident on the same 24GB GPU
+simultaneously — see "Model switch" below).
+
 **Model: `google/gemma-2b-it`**, switched from the originally-planned
 `Qwen/Qwen2.5-7B-Instruct` after real infrastructure testing (see "Model
 switch" below). gemma-2b-it is one of the paper's own benchmarked models

@@ -89,11 +89,12 @@ def stage_source_dir(repo_root: Path) -> str:
     return str(staging)
 
 
-def launch(source_lang: str, target_langs: str, max_run_hours: float, session: sagemaker.Session, source_dir: str, instance_type: str, model_path: str, test_sample_size: int | None, skip_addition: bool):
+def launch(source_lang: str, target_langs: str, max_run_hours: float, session: sagemaker.Session, source_dir: str, instance_type: str, model_path: str, test_sample_size: int | None, skip_addition: bool, wildguard_batch_size: int):
     hyperparameters = {
         "model_path": model_path,
         "source_lang": source_lang,
         "target_langs": target_langs,
+        "wildguard_batch_size": wildguard_batch_size,
     }
     if test_sample_size is not None:
         hyperparameters["test_sample_size"] = test_sample_size
@@ -133,6 +134,8 @@ def main():
                     help="Subsample each language's 572-prompt test set to this many (fixed seed). Unset = full 572.")
     p.add_argument("--skip_addition", action="store_true",
                     help="Skip the activation-addition completions/eval (Figure 3, out of Tier-1 scope) to cut ~1/3 of the compute.")
+    p.add_argument("--wildguard_batch_size", type=int, default=1,
+                    help="Completions per WildGuard generate() call. Default 1 = original unbatched behavior (measured ~12.7s/item; batching is the dominant lever for the 5-GPU-hour budget).")
     args = p.parse_args()
 
     session = sagemaker.Session(boto_session=boto3.Session(region_name=REGION))
@@ -142,7 +145,7 @@ def main():
 
     jobs = []
     for source_lang in args.source_langs.split(","):
-        jobs.append(launch(source_lang.strip(), args.target_langs, args.max_run_hours, session, source_dir, args.instance_type, args.model_path, args.test_sample_size, args.skip_addition))
+        jobs.append(launch(source_lang.strip(), args.target_langs, args.max_run_hours, session, source_dir, args.instance_type, args.model_path, args.test_sample_size, args.skip_addition, args.wildguard_batch_size))
 
     print("\nAll jobs submitted (wait=False). Job names:")
     for e in jobs:
