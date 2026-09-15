@@ -83,8 +83,19 @@ import traceback
 REQUIREMENTS_FIXED = os.path.join(os.path.dirname(__file__), "requirements_fixed.txt")
 
 
-def pip_install_missing():
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", REQUIREMENTS_FIXED], check=True)
+def pip_install_missing(max_attempts: int = 3):
+    # Retries a transient mid-download connection failure (observed once:
+    # an SSL socket read reset partway through a large wheel download,
+    # unrelated to any package pin) rather than requiring a manual relaunch.
+    last_err = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            subprocess.run([sys.executable, "-m", "pip", "install", "-q", "-r", REQUIREMENTS_FIXED], check=True)
+            return
+        except subprocess.CalledProcessError as e:
+            last_err = e
+            print(f"pip install attempt {attempt}/{max_attempts} failed, retrying: {e}", flush=True)
+    raise last_err
 
 
 def build_source_config(model_path: str, source_lang: str, model_alias: str) -> "mmengine.Config":
