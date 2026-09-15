@@ -11,6 +11,33 @@ from transformers import (
 )
 from tqdm import tqdm
 
+_SHARED_WILDGUARD_EVALUATOR = None
+
+
+def get_shared_wildguard_evaluator():
+    """Returns one process-wide WildGuardEvaluator, constructing it on first
+    call. pipeline/submodules/evaluate_jailbreak.py's evaluate_jailbreak()
+    previously called `WildGuardEvaluator()` fresh every time it ran (once
+    per dataset per intervention -- e.g. twice per (source, target)
+    language pair in scripts/multi_test.py, plus twice more in
+    pipeline/run_pipeline.py's own self-eval), reloading the full ~14GB
+    model from disk into GPU memory every single call. Besides the wasted
+    reload time, on job mr-tier1-en-2026-09-15-04-14-13-875 (wildguard_
+    batch_size=24) the second reload within one job triggered
+    'Some parameters are on the meta device because they were offloaded to
+    the disk and cpu' -- accelerate's device_map="auto" falling back to
+    CPU/disk offload for some layers, presumably because the first
+    (never-freed) instance's memory was still resident, leaving too little
+    contiguous free VRAM for the second full copy alongside it. That made
+    generation catastrophically slow (~800s/batch vs. the expected ~2s).
+    Caching one instance sidesteps both problems. See
+    sagemaker_tier1/CHANGES.md."""
+    global _SHARED_WILDGUARD_EVALUATOR
+    if _SHARED_WILDGUARD_EVALUATOR is None:
+        _SHARED_WILDGUARD_EVALUATOR = WildGuardEvaluator()
+    return _SHARED_WILDGUARD_EVALUATOR
+
+
 class WildGuardEvaluator(nn.Module):
     
     def __init__(self) -> None:

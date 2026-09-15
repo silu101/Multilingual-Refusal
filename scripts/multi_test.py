@@ -1,6 +1,7 @@
 import torch
 import json
 import os
+import time
 import os.path as osp
 from datetime import datetime
 from dotenv import load_dotenv
@@ -124,43 +125,54 @@ def main(config_path):
 
 
     if cfg.lang != 'en':
+        # Real error visibility + retry-with-backoff (see
+        # sagemaker_tier1/CHANGES.md): the original loops below caught
+        # every exception and silently replaced it with the literal string
+        # "Translation failed", which then got fed straight to WildGuard as
+        # if it were the model's response -- a 100% translation failure
+        # rate (confirmed on job mr-tier1-en-2026-09-15-04-14-13-875) would
+        # silently produce a meaningless "all safe" WildGuard score instead
+        # of an error. translate_with_retry() below preserves the exact
+        # same fallback behavior (falls back to the literal untranslated
+        # response, same as `translation if translation else
+        # response['response']` did) but retries transient failures and
+        # actually logs what broke on the final failure.
+        def translate_with_retry(text, max_attempts=3, backoff_seconds=2.0):
+            last_err = None
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return translator.translate(text)
+                except Exception as e:
+                    last_err = e
+                    if attempt < max_attempts:
+                        time.sleep(backoff_seconds * attempt)
+            print(f"Translation failed after {max_attempts} attempts: {type(last_err).__name__}: {last_err}")
+            return None
+
     # translate back to English and save and eval
         for response in tqdm(completions):
             # response['instruction'] = translator.translate(response['instruction'], target_lang='en')
             # response['response_translated'] = translator.translate_text(response['response'], target_lang='en-us').text
             if len (response['response']) >= 5000:
                 response['response'] = response['response'][:4999]
-            try:
-                translation = translator.translate(response['response'])
-            except Exception as e:
-                translation = "Translation failed"
-                print('Translation failed')
+            translation = translate_with_retry(response['response'])
             response['response_translated'] = translation if translation else response['response']
-            
-            
+
+
         for response in tqdm(completions_baseline):
             # response['instruction'] = translator.translate(response['instruction'], target_lang='en')
             # response['response_translated'] = translator.translate_text(response['response'], target_lang='en-us').text
             if len (response['response']) >= 5000:
                 response['response'] = response['response'][:4999]
-            try:
-                translation = translator.translate(response['response'])
-            except Exception as e:
-                translation = "Translation failed"
-                print('Translation failed')
+            translation = translate_with_retry(response['response'])
             response['response_translated'] = translation if translation else response['response']
-        
+
         for response in tqdm(completions_addition):
             # response['instruction'] = translator.translate(response['instruction'], target_lang='en')
             # response['response_translated'] = translator.translate_text(response['response'], target_lang='en-us').text
             if len (response['response']) >= 5000:
                 response['response'] = response['response'][:4999]
-            try:
-                # import pdb; pdb.set_trace()
-                translation = translator.translate(response['response'])
-            except Exception as e:
-                translation = "Translation failed"
-                print('Translation failed')
+            translation = translate_with_retry(response['response'])
             response['response_translated'] = translation if translation else response['response']
 
     if not os.path.exists(os.path.join(cfg.artifact_path, 'completions')):

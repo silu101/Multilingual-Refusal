@@ -106,6 +106,46 @@ opening its log file) — it apparently only ever ran against
 `entrypoint_tier1.py` create `eval_cfg.artifact_path` before calling
 `multi_test_main()`, rather than editing `multi_test.py` itself.
 
+## Two more bugs found at wildguard_batch_size=24 (job mr-tier1-en-2026-09-15-04-14-13-875)
+
+1. **Translation failures were silently swallowed and fed to WildGuard as
+   real content.** `scripts/multi_test.py`'s three back-translation loops
+   caught every exception from `translator.translate(...)` (a
+   `deep_translator.GoogleTranslator` call — the official, unofficial/free
+   Google Translate endpoint) and replaced it with the literal string
+   `"Translation failed"`, which then became the German target's
+   `response_translated` and got scored by WildGuard as if it were the
+   model's actual response. On this job, **100% of the ~100 German
+   back-translations failed** (a AWS-datacenter-IP rate limit/block against
+   the free endpoint is the most likely cause, though the original code
+   never printed the actual exception, only a generic message, so this
+   couldn't be confirmed) — silently producing a meaningless
+   "everything looks safe" WildGuard score instead of erroring visibly.
+   Refactored the three near-duplicate loops into one `translate_with_retry()`
+   helper: same fallback behavior on final failure (falls back to the
+   untranslated response, exactly as `translation if translation else
+   response['response']` already did), but retries transient failures
+   (3 attempts, linear backoff) and actually logs the real exception type
+   and message when all attempts fail, instead of a fixed string.
+2. **`WildGuardEvaluator()` was reloaded from scratch on every call**
+   (`pipeline/submodules/evaluate_jailbreak.py`'s `evaluate_jailbreak()`
+   constructs a fresh instance each time `"wildguard"` is in
+   `jailbreak_eval_methodologies` — twice per `run_pipeline()` self-eval,
+   twice more per `multi_test.py` (source, target) pair). At
+   `wildguard_batch_size=8` this was merely wasteful (extra reload time);
+   at `wildguard_batch_size=24` the second reload within the same job hit
+   `WARNING:root:Some parameters are on the meta device because they were
+   offloaded to the disk and cpu` — `accelerate`'s `device_map="auto"`
+   falling back to CPU/disk offload for some layers, apparently because
+   the first (never-freed) instance's ~14GB was still resident, leaving
+   too little contiguous GPU memory for a second full copy. That made
+   generation catastrophically slow (~800s for one batch of 24, vs. the
+   expected ~2s). Added `evaluators.wildguard.get_shared_wildguard_evaluator()`,
+   a process-wide singleton factory, and changed `evaluate_jailbreak.py`
+   to call it instead of constructing `WildGuardEvaluator()` directly.
+   Only one instance is ever loaded per job now, regardless of how many
+   times evaluation runs.
+
 **Model: `google/gemma-2b-it`**, switched from the originally-planned
 `Qwen/Qwen2.5-7B-Instruct` after real infrastructure testing (see "Model
 switch" below). gemma-2b-it is one of the paper's own benchmarked models

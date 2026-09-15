@@ -17,7 +17,7 @@ import time
 # pricing data and has had version-compatibility breaks with its own
 # aiohttp/openai dependencies) that cost real install time and reliability
 # for functionality this fork never exercises. See sagemaker_tier1/CHANGES.md.
-from evaluators.wildguard import WildGuardEvaluator
+from evaluators.wildguard import get_shared_wildguard_evaluator
 from torch.utils.data import DataLoader
 
 # based on https://github.com/JailbreakBench/jailbreakbench/blob/4dbcc097739dd684fbf789cc3d4f97372bd72851/src/jailbreakbench/classifier.py
@@ -263,7 +263,7 @@ def evaluate_jailbreak(
         
         dataloader = DataLoader(completions, **cfg.data_loader)
         
-        evaluator  = WildGuardEvaluator()
+        evaluator  = get_shared_wildguard_evaluator()  # see evaluators/wildguard.py's docstring on why
         
         # evaluator.evaluate(dataloader, logger, cfg)#, cfg.verbose)
         completions = evaluator.evaluate_all(completions, logger, cfg)#, cfg.verbose)
