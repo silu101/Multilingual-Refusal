@@ -83,11 +83,28 @@ gets classified or how. `entrypoint_tier1.py`'s `--wildguard_batch_size`
 flag sets it for our runs; `scripts/multi_test.py` and `pipeline/
 run_pipeline.py` both already pass `cfg` straight through to
 `evaluate_jailbreak()` → `WildGuardEvaluator.evaluate_all()`, so no
-further wiring was needed for the batch size to reach it. Real
-measured speedup and the batch size actually used are recorded once
-verified on a live job (a batch size that's too large risks OOM given
-gemma-2b-it and WildGuard, ~7B, are already resident on the same 24GB GPU
-simultaneously — see "Model switch" below).
+further wiring was needed for the batch size to reach it. (A batch size
+that's too large risks OOM given gemma-2b-it and WildGuard, ~7B, are
+already resident on the same 24GB GPU simultaneously — see "Model switch"
+below.)
+
+**Measured on job `mr-tier1-en-2026-09-15-03-45-25-013`** (batch_size=8):
+100 items in 13 batches, 4:21 total ≈ **2.6s/item**, vs. 12.7s/item
+unbatched — a **4.9x** speedup (short of the naive 8x expected from batch
+size alone, likely padding overhead from mixing short and long — up to
+512-token — generated responses in the same batch). At 4.9x, the full
+sweep drops from ~42-43 GPU-hours to **~8.6-8.8 GPU-hours** — better, but
+still over the 5-hour target, so a larger batch size was tried next.
+
+This same job also surfaced one more real bug in the official
+`scripts/multi_test.py`: its `main()` calls
+`mmengine.MMLogger.get_instance(log_file=...)` without ever creating the
+containing directory first (unlike `pipeline/run_pipeline.py`'s own
+`Logger` class, which does `os.makedirs(..., exist_ok=True)` before
+opening its log file) — it apparently only ever ran against
+`artifact_path` values that happened to already exist. Fixed by having
+`entrypoint_tier1.py` create `eval_cfg.artifact_path` before calling
+`multi_test_main()`, rather than editing `multi_test.py` itself.
 
 **Model: `google/gemma-2b-it`**, switched from the originally-planned
 `Qwen/Qwen2.5-7B-Instruct` after real infrastructure testing (see "Model

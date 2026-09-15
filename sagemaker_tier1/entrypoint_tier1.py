@@ -185,6 +185,14 @@ def main():
         eval_cfg.lang = target
         eval_cfg.source_lang = args.source_lang
         eval_cfg.artifact_path = f"output/tier1_crosslingual/{model_alias}/{args.source_lang}/{target}"
+        # scripts/multi_test.py's own main() never creates cfg.artifact_path
+        # before mmengine.MMLogger.get_instance() opens a log file inside it
+        # -- a real bug in the official script, just never hit before
+        # because it happened to always be run against artifact_path values
+        # that already existed. Confirmed via failed job
+        # mr-tier1-en-2026-09-15-03-45-25-013: FileNotFoundError on the very
+        # first fresh (source, target) directory we pointed it at.
+        os.makedirs(eval_cfg.artifact_path, exist_ok=True)
         if args.test_sample_size is not None:
             eval_cfg.test_sample_size = args.test_sample_size
         if args.skip_addition:
