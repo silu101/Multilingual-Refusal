@@ -157,3 +157,5 @@ jsonpickle==3.2.2
 # inside llamaguard2_judge_fn()/harmbench_judge_fn(), neither of which any
 # config in this fork calls (only substring_matching + wildguard are used).
 # See sagemaker_tier1/CHANGES.md.
+deepl
+GPUtil
