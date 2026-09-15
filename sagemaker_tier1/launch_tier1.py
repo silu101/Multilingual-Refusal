@@ -67,7 +67,14 @@ DEFAULT_MODEL_PATH = "google/gemma-2b-it"  # switched from Qwen2.5-7B-Instruct b
     # gemma-2b-it is one of the paper's own benchmarked models (Fig. 1), so
     # this is a different valid data point from the paper, not a deviation.
 
-ALL_LANGS = "ar,de,en,es,fr,it,ja,ko,nl,pl,ru,th,yo,zh"
+# 'yo' (Yoruba) excluded by user decision: Amazon Translate returns
+# UnsupportedLanguagePairException for yo->en (confirmed locally), and
+# switching translation providers was necessary because Google Translate's
+# free endpoint was persistently blocked from this AWS account (see
+# sagemaker_tier1/CHANGES.md). This is a real coverage gap against the
+# paper's 14-language claim, not a silent omission -- Yoruba is the
+# paper's headline "safety-misaligned language" finding (Table 1).
+ALL_LANGS = "ar,de,en,es,fr,it,ja,ko,nl,pl,ru,th,zh"
 
 
 def hf_token() -> str:

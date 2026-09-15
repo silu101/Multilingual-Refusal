@@ -159,3 +159,4 @@ jsonpickle==3.2.2
 # See sagemaker_tier1/CHANGES.md.
 deepl
 GPUtil
+boto3

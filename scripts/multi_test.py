@@ -23,6 +23,48 @@ from tqdm import tqdm
 from utils.utils import LoggerWriter
 
 
+class AmazonTranslateClient:
+    """Drop-in replacement for deep_translator.GoogleTranslator exposing
+    the same .translate(text) -> str interface, backed by Amazon Translate
+    instead. See sagemaker_tier1/CHANGES.md for why: GoogleTranslator's
+    underlying free/unofficial endpoint was persistently returning
+    TooManyRequests from this AWS account (confirmed even with
+    self-throttling under its stated 5 req/s limit -- likely a
+    datacenter-IP-range-level block, not our own request rate). Amazon
+    Translate is a paid, official AWS service reachable with the same
+    SageMaker execution role credentials already in use, no new API key
+    needed, and has a much higher default quota (100 TPS) than Google's
+    free tier. Known gap: it does not support Yoruba
+    (UnsupportedLanguagePairException, confirmed locally) -- 'yo' is
+    excluded from this replication round rather than silently dropped or
+    worked around; see CHANGES.md."""
+
+    # Amazon Translate's synchronous TranslateText has a 10,000-byte (UTF-8)
+    # limit per request; some target languages (th, zh, ar, ja, ko) use
+    # multi-byte characters where the repo's existing 4999-*character*
+    # truncation (see the call sites below) could still exceed that. This
+    # truncates by encoded byte length, with margin, on top of the
+    # existing character-based truncation.
+    MAX_BYTES = 9000
+
+    def __init__(self, source_lang: str, target_lang: str = 'en', region_name: str = 'us-east-1'):
+        import boto3
+        self.client = boto3.client('translate', region_name=region_name)
+        self.source_lang = source_lang
+        self.target_lang = target_lang
+
+    def translate(self, text: str) -> str:
+        encoded = text.encode('utf-8')
+        if len(encoded) > self.MAX_BYTES:
+            text = encoded[:self.MAX_BYTES].decode('utf-8', errors='ignore')
+        response = self.client.translate_text(
+            Text=text,
+            SourceLanguageCode=self.source_lang,
+            TargetLanguageCode=self.target_lang,
+        )
+        return response['TranslatedText']
+
+
 def evaluate_completions_and_save_results_for_dataset(cfg, lang, intervention_label, dataset_name, eval_methodologies):
     """Evaluate completions and save results for a dataset."""
     with open(os.path.join(cfg.artifact_path, f'{lang}/completions/{dataset_name}_{intervention_label}_completions.json'), 'r') as f:
@@ -47,8 +89,10 @@ def main(config_path):
     cfg = mmengine.Config.fromfile(config_path)
     time_stamp = datetime.now().strftime("%y%m%d_%H%M")
     
-    test_lang = cfg.lang if cfg.lang != 'zh' else 'zh-CN'
-    translator = GoogleTranslator(source=test_lang, target='en')
+    # Switched from GoogleTranslator to AmazonTranslateClient -- see its
+    # docstring above and sagemaker_tier1/CHANGES.md. Amazon Translate uses
+    # plain 'zh' directly (no zh-CN special-casing needed, unlike Google).
+    translator = AmazonTranslateClient(source_lang=cfg.lang, target_lang='en')
     
     model_alias = os.path.basename(cfg.model_path)
     cfg.model_alias = model_alias
@@ -148,7 +192,12 @@ def main(config_path):
         # final failure as originally (falls back to the untranslated
         # response).
         _last_translate_call = [0.0]
-        min_gap_seconds = 0.3  # ~3.3 req/s, safely under Google's stated 5/s
+        # Now backed by Amazon Translate (see AmazonTranslateClient above),
+        # not Google -- its default quota is 100 TPS/account, far higher
+        # than Google's free-tier 5 req/s, so this only needs to keep us
+        # comfortably under that (also boto3 has its own built-in retry
+        # handling for AWS API throttling on top of this).
+        min_gap_seconds = 0.02  # ~50 req/s, well under Amazon Translate's 100 TPS default quota
         # Circuit breaker: if the endpoint is persistently blocking us
         # (e.g. a shared-NAT-IP daily quota already exhausted by other AWS
         # tenants, not just our own request rate), retrying every single

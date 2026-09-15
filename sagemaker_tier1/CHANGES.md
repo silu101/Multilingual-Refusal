@@ -181,6 +181,59 @@ we need a real translation API key or a different service — noted as a
 possible need back when this replication started), is recorded once
 tested on a live job.
 
+**Result: throttling did not help** (job `mr-tier1-en-2026-09-15-05-59-58-336`
+— same `TooManyRequests` on the very first attempt, circuit breaker
+tripped after 5 consecutive failures as designed, saving wasted time but
+confirming the block is not our own request rate). Total pair time did
+drop to 26m15s from 47m20s, but every German response fell back to
+**untranslated** text, which WildGuard then scored directly — invalid for
+the paper's actual method (translate to English, then judge), since the
+whole point of the replication is comparing safety judgment across
+languages.
+
+## Switched translation provider: Google Translate → Amazon Translate
+
+Given the persistent block, switched `scripts/multi_test.py`'s translator
+from `deep_translator.GoogleTranslator` to a new `AmazonTranslateClient`
+class (same file) wrapping `boto3.client('translate').translate_text()` —
+exposes the same `.translate(text) -> str` interface, so
+`translate_with_retry()`'s retry/circuit-breaker logic needed no changes,
+only what `translator` actually is. Chosen over the alternatives
+considered (a different AWS region; a paid Google Cloud Translate API
+key; a local HF translation model) because it needs no new external
+account or credential — it authenticates with the same SageMaker
+execution role already in use — and has a much higher default quota
+(100 TPS) than Google's free tier. Required one IAM change, made by the
+user directly (not by this session — modifying account security settings
+isn't something this assistant does even with explicit permission):
+an inline policy `AllowTranslateText` on
+`safety-layers-sagemaker-execution-role` granting only
+`translate:TranslateText` (`Resource: "*"`, required — Translate doesn't
+support resource-level ARN scoping). Verified attached via
+`aws iam get-role-policy` before writing any code against it.
+
+**Known gap: Amazon Translate does not support Yoruba.** Confirmed locally
+(`UnsupportedLanguagePairException: Unsupported language pair: yo to en`)
+before writing any code, by testing all 13 non-English PolyRefuse target
+languages directly against the API — the other 13 (ar, de, es, fr, it, ja,
+ko, nl, pl, ru, th, zh) all accepted the language pair. By user decision,
+**Yoruba is excluded from this replication round** (`sagemaker_tier1/
+launch_tier1.py`'s `ALL_LANGS` default now omits `yo`) rather than
+silently producing invalid data for it or attempting a from-scratch local
+model. This is a real coverage gap against the paper's 14-language claim,
+worth flagging prominently: Yoruba is the paper's headline
+"safety-misaligned language" finding (Table 1, §4) — the language most
+central to their "not all languages are safety-aligned" argument. A
+replication that's missing Yoruba is missing the paper's most distinctive
+data point, not an arbitrary one. Revisiting this (a local NLLB-200 or
+similar HF translation model as a Yoruba-specific fallback) was discussed
+and deferred, not ruled out.
+
+Also added `boto3` to `sagemaker_tier1/requirements_fixed.txt` (not
+previously listed — `AmazonTranslateClient` is the first thing in this
+fork that needs it inside the training container itself, as opposed to
+only in the local launcher).
+
 **Model: `google/gemma-2b-it`**, switched from the originally-planned
 `Qwen/Qwen2.5-7B-Instruct` after real infrastructure testing (see "Model
 switch" below). gemma-2b-it is one of the paper's own benchmarked models
