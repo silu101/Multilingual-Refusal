@@ -50,7 +50,6 @@ jupyter_client==8.6.2
 jupyter_core==5.7.2
 kiwisolver==1.4.5
 lark==1.1.9
-litellm
 llvmlite==0.42.0
 lm-format-enforcer==0.10.1
 markdown-it-py==3.0.0
@@ -80,7 +79,6 @@ nvidia-ml-py==12.555.43
 nvidia-nccl-cu12==2.20.5
 nvidia-nvjitlink-cu12==12.5.40
 nvidia-nvtx-cu12==12.1.105
-openai
 orjson==3.10.4
 outlines==0.0.43
 packaging==24.1
@@ -143,8 +141,6 @@ ujson==5.10.0
 urllib3==2.2.1
 uvicorn==0.30.1
 uvloop==0.19.0
-vllm==0.5.0
-vllm-flash-attn==2.5.9
 watchfiles==0.22.0
 wcwidth==0.2.13
 websockets==12.0
@@ -156,3 +152,8 @@ zstandard==0.22.0
 mmengine==0.10.4
 deep-translator==1.11.4
 jsonpickle==3.2.2
+# litellm, openai, vllm, vllm-flash-attn removed from this fixed list --
+# pipeline/submodules/evaluate_jailbreak.py now imports them lazily, only
+# inside llamaguard2_judge_fn()/harmbench_judge_fn(), neither of which any
+# config in this fork calls (only substring_matching + wildguard are used).
+# See sagemaker_tier1/CHANGES.md.

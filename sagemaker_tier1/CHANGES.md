@@ -164,12 +164,51 @@ so the two reproductions stay independent. Only AWS credentials, the IAM
 execution role, and the HF token file are shared between them (all
 credential/config reuse, no code or data reuse).
 
+## Additional edit to pipeline/submodules/evaluate_jailbreak.py
+
+`vllm` (`LLM`, `SamplingParams`, `destroy_model_parallel`) and `litellm`
+were imported at module level, even though they're only used inside
+`harmbench_judge_fn()` and `llamaguard2_judge_fn()` respectively — neither
+of which any config in this fork calls (`jailbreak_eval_methodologies` is
+always `["substring_matching", "wildguard"]`). Both are heavy, fragile
+dependencies for functionality never exercised here:
+- `litellm` does a network call at import time (fetching remote pricing
+  data) and, on job `mr-tier1-en-2026-09-15-01-05-09-250`, crashed with
+  `AttributeError: module 'aiohttp' has no attribute
+  'ConnectionTimeoutError'` when that call hit a transient timeout —
+  a bug in litellm's own exception-handling for its resolved aiohttp
+  version, not anything in this repo.
+- `vllm` pulls in `vllm-flash-attn` (a slow native compile) and a large
+  transitive dependency tree (`outlines`, `xformers`, several `nvidia-*`
+  CUDA packages), none of which contributes to substring-matching or
+  WildGuard scoring.
+
+Moved both imports to be local to the functions that actually use them
+(`import litellm` inside `LlamaGuard2Classifier.classify_responses()`;
+`from vllm import ...` inside `harmbench_judge_fn()`). Behavior for anyone
+who *does* select the `"harmbench"` or `"llamaguard2"` methodologies is
+unchanged — the imports still happen, just lazily, the first time those
+functions actually run. `litellm`, `openai`, `vllm`, and `vllm-flash-attn`
+were then removed from `requirements_fixed.txt` entirely, since nothing in
+the path we actually run needs them installed at all. (Before removing
+them outright, two more bit-rotted/broken pins from the original
+`requirements.txt` were found and fixed the same way as `litellm` and
+`pyairports`: `openai==1.33.0` — not broken itself, but pinning it forced
+pip to resolve `litellm==1.14.4`, an old version whose own code still did
+`from openai.error import Timeout`, which doesn't exist in any
+openai>=1.0. Confirmed and fixed locally, for free, before touching
+SageMaker again: unpinning both lets pip co-resolve a mutually compatible
+modern pair.)
+
 ## What was intentionally NOT changed
 
-- No changes to `pipeline/submodules/*.py`, `pipeline/utils/*.py`,
-  `pipeline/model_utils/*.py`, `dataset/*.py`, or `evaluators/*.py` — the
-  refusal-direction extraction, selection, ablation-hook, and WildGuard
-  scoring logic all run exactly as authored upstream.
+- No changes to `pipeline/utils/*.py`, `pipeline/model_utils/*.py`,
+  `dataset/*.py`, or `evaluators/*.py` — the refusal-direction extraction,
+  selection, ablation-hook, and WildGuard scoring logic all run exactly as
+  authored upstream. The one change inside `pipeline/submodules/` is the
+  lazy-import fix above (evaluate_jailbreak.py) — everything else in that
+  directory (`generate_directions.py`, `select_direction.py`,
+  `evaluate_loss.py`) is untouched.
 - No change to any hyperparameter in the existing per-language configs
   (n_train=128, n_val=32, n_test=572 via `PolyRefuse/harmful_test_translated_*.json`,
   kl_threshold=0.1, ablate_kl_threshold=0.2, batch_size=64, max_new_tokens=512,

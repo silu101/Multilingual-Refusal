@@ -5,11 +5,18 @@ import gc
 import numpy as np
 
 from transformers import AutoTokenizer
-from vllm import LLM, SamplingParams
-from vllm.distributed.parallel_state import destroy_model_parallel
 import torch
-import litellm
 import time
+# vllm and litellm are imported lazily, inside harmbench_judge_fn() and
+# llamaguard2_judge_fn() respectively, instead of here at module level.
+# Neither is needed for the "substring_matching" or "wildguard"
+# methodologies (used throughout this fork's configs) -- only for
+# "harmbench"/"llamaguard2", which nothing here selects. Both are heavy,
+# fragile optional dependencies (vllm pulls vllm-flash-attn, a slow native
+# compile; litellm does a network call at import time to fetch remote
+# pricing data and has had version-compatibility breaks with its own
+# aiohttp/openai dependencies) that cost real install time and reliability
+# for functionality this fork never exercises. See sagemaker_tier1/CHANGES.md.
 from evaluators.wildguard import WildGuardEvaluator
 from torch.utils.data import DataLoader
 
@@ -110,6 +117,7 @@ class LlamaGuard2Classifier:
         classifier_inputs = [
             self._build_classifier_input(prompt, response) for prompt, response in zip(prompts, responses)
         ]
+        import litellm  # lazy import, see module-level note
         outputs = litellm.batch_completion(
             model=self.MODEL, messages=classifier_inputs, api_key=self._api_key, temperature=0
         )
@@ -151,6 +159,8 @@ def llamaguard2_judge_fn(prompts: List[str], responses: List[str]) -> List[int]:
 
 # taken from https://github.com/centerforaisafety/HarmBench/blob/main/evaluate_completions.py#L65
 def harmbench_judge_fn(prompts: List[str], responses: List[str]) -> List[int]:
+    from vllm import LLM, SamplingParams  # lazy import, see module-level note
+    from vllm.distributed.parallel_state import destroy_model_parallel
 
     classifier = LLM(model='cais/HarmBench-Llama-2-13b-cls', tensor_parallel_size=1)
     classifier.llm_engine.tokenizer.truncation_side = "left"
