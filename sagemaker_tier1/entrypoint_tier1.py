@@ -34,6 +34,8 @@ For --source_lang <L>:
   5. Copies pipeline/runs/ and output/ into $SM_MODEL_DIR so results reach
      S3 as the training job's model artifact.
 """
+from __future__ import annotations
+
 import argparse
 import os
 import shutil
@@ -42,7 +44,13 @@ import sys
 import tempfile
 import traceback
 
-import mmengine
+# NOTE: mmengine is intentionally NOT imported here at module level -- it is
+# one of the packages pip_install_missing() installs at runtime (see below),
+# so it isn't present yet when this file is first loaded. It's imported
+# locally, after pip_install_missing() has run, inside main() and
+# build_source_config(). `from __future__ import annotations` above keeps
+# the `-> mmengine.Config` type hint from being evaluated at module-load
+# time (it'd otherwise NameError before the local import ever runs).
 
 # requirements.txt in this fork is NOT installed on the SageMaker container.
 # Verified reason (not a guess): SageMaker's PyTorch estimator auto-runs
@@ -76,7 +84,8 @@ def pip_install_missing():
     subprocess.run([sys.executable, "-m", "pip", "install", "-q"] + DEPS, check=True)
 
 
-def build_source_config(model_path: str, source_lang: str, model_alias: str) -> mmengine.Config:
+def build_source_config(model_path: str, source_lang: str, model_alias: str) -> "mmengine.Config":
+    import mmengine  # see module-level note: installed at runtime, imported locally
     # Prefer a model-and-language-specific template if one is already
     # checked in (de/ja/ko/ru/th/yo/zh have one for Qwen2.5-7B-Instruct from
     # the upstream authors' own runs); otherwise fall back to
@@ -111,7 +120,8 @@ def main():
 
     pip_install_missing()
 
-    # Imported after MISSING_DEPS are installed.
+    # Imported after pip_install_missing() has run -- mmengine included.
+    import mmengine
     from pipeline.run_pipeline import run_pipeline
     from scripts.multi_test import main as multi_test_main
 
