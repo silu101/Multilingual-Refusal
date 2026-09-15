@@ -125,28 +125,63 @@ def main(config_path):
 
 
     if cfg.lang != 'en':
-        # Real error visibility + retry-with-backoff (see
+        # Real error visibility + retry-with-backoff + self-throttling (see
         # sagemaker_tier1/CHANGES.md): the original loops below caught
         # every exception and silently replaced it with the literal string
         # "Translation failed", which then got fed straight to WildGuard as
         # if it were the model's response -- a 100% translation failure
         # rate (confirmed on job mr-tier1-en-2026-09-15-04-14-13-875) would
         # silently produce a meaningless "all safe" WildGuard score instead
-        # of an error. translate_with_retry() below preserves the exact
-        # same fallback behavior (falls back to the literal untranslated
-        # response, same as `translation if translation else
-        # response['response']` did) but retries transient failures and
-        # actually logs what broke on the final failure.
-        def translate_with_retry(text, max_attempts=3, backoff_seconds=2.0):
+        # of an error. Root cause (confirmed on job
+        # mr-tier1-en-2026-09-15-05-07-12-047, once errors were no longer
+        # swallowed): deep_translator.GoogleTranslator's underlying (free,
+        # unofficial) endpoint enforces "5 requests per second and up to
+        # 200k requests per day" and was returning TooManyRequests on every
+        # call. The library's own suggested fix, translate_batch(), does
+        # NOT help -- checked its source locally: it's just a Python-level
+        # loop calling .translate() once per item, i.e. the exact same
+        # number of HTTP requests. translate_with_retry() below instead
+        # self-throttles to stay under that stated per-second limit and
+        # backs off substantially longer than before specifically on
+        # TooManyRequests (the error message says "wait and try again
+        # later", not "try again in 2 seconds"). Same fallback behavior on
+        # final failure as originally (falls back to the untranslated
+        # response).
+        _last_translate_call = [0.0]
+        min_gap_seconds = 0.3  # ~3.3 req/s, safely under Google's stated 5/s
+        # Circuit breaker: if the endpoint is persistently blocking us
+        # (e.g. a shared-NAT-IP daily quota already exhausted by other AWS
+        # tenants, not just our own request rate), retrying every single
+        # item is pure wasted GPU-hours with no chance of succeeding. After
+        # this many consecutive items exhaust every retry, stop retrying
+        # for the rest of the run and fall back immediately.
+        _consecutive_full_failures = [0]
+        CIRCUIT_BREAKER_THRESHOLD = 5
+
+        def translate_with_retry(text, max_attempts=3, backoff_seconds=5.0):
+            if _consecutive_full_failures[0] >= CIRCUIT_BREAKER_THRESHOLD:
+                return None
             last_err = None
             for attempt in range(1, max_attempts + 1):
+                elapsed = time.time() - _last_translate_call[0]
+                if elapsed < min_gap_seconds:
+                    time.sleep(min_gap_seconds - elapsed)
                 try:
-                    return translator.translate(text)
+                    result = translator.translate(text)
+                    _last_translate_call[0] = time.time()
+                    _consecutive_full_failures[0] = 0
+                    return result
                 except Exception as e:
+                    _last_translate_call[0] = time.time()
                     last_err = e
                     if attempt < max_attempts:
                         time.sleep(backoff_seconds * attempt)
+            _consecutive_full_failures[0] += 1
             print(f"Translation failed after {max_attempts} attempts: {type(last_err).__name__}: {last_err}")
+            if _consecutive_full_failures[0] >= CIRCUIT_BREAKER_THRESHOLD:
+                print(f"{CIRCUIT_BREAKER_THRESHOLD} consecutive translation failures -- "
+                      f"assuming the endpoint is blocking this run and disabling further retries "
+                      f"(falling back to untranslated responses for the remainder).")
             return None
 
     # translate back to English and save and eval

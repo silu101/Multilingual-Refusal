@@ -146,6 +146,41 @@ opening its log file) — it apparently only ever ran against
    Only one instance is ever loaded per job now, regardless of how many
    times evaluation runs.
 
+## Confirmed root cause + self-throttling (job mr-tier1-en-2026-09-15-05-07-12-047)
+
+With real error logging in place (point 1 above), this job's log showed
+the actual exception on every failed translation:
+`TooManyRequests: Server Error: You made too many requests to the server.
+According to google, you are allowed to make 5 requests per second and up
+to 200k requests per day. You can wait and try again later or you can try
+the translate_batch function.` — deep_translator's own suggested fix
+(`translate_batch()`) was checked locally and does **not** help: its
+implementation (`BaseTranslator._translate_batch`) is just a Python loop
+calling `.translate()` once per item — identical request count, no
+batching at the HTTP level.
+
+This job did also confirm the WildGuard singleton fix worked (no CPU
+offload warning this time) and ran the entire pipeline for one
+(source=en, target=de) pair end to end successfully: **47m20s total**
+(2840s billable), including the ~6-minute one-time WildGuard download.
+Whether that number is representative of a "working" run is unclear,
+though, since translation was still failing on every call during it (this
+job predates the throttling fix below).
+
+Added to `translate_with_retry()`: self-throttling to a minimum 0.3s gap
+between calls (~3.3 req/s, under Google's stated 5/s limit) via a
+timestamp check before each attempt, and a circuit breaker — if 5
+consecutive items exhaust all retry attempts, further calls in the same
+run skip retrying entirely and fall back immediately. This exists because
+if the block is actually a shared-NAT-IP daily quota already exhausted by
+other AWS tenants (rather than our own request rate), no amount of
+self-throttling or retrying will ever succeed, and retrying every item
+anyway would be pure wasted GPU-hours. Whether throttling actually
+resolves the failures, or the circuit breaker ends up tripping (meaning
+we need a real translation API key or a different service — noted as a
+possible need back when this replication started), is recorded once
+tested on a live job.
+
 **Model: `google/gemma-2b-it`**, switched from the originally-planned
 `Qwen/Qwen2.5-7B-Instruct` after real infrastructure testing (see "Model
 switch" below). gemma-2b-it is one of the paper's own benchmarked models
