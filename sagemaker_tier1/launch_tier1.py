@@ -89,7 +89,16 @@ def stage_source_dir(repo_root: Path) -> str:
     return str(staging)
 
 
-def launch(source_lang: str, target_langs: str, max_run_hours: float, session: sagemaker.Session, source_dir: str, instance_type: str, model_path: str):
+def launch(source_lang: str, target_langs: str, max_run_hours: float, session: sagemaker.Session, source_dir: str, instance_type: str, model_path: str, test_sample_size: int | None, skip_addition: bool):
+    hyperparameters = {
+        "model_path": model_path,
+        "source_lang": source_lang,
+        "target_langs": target_langs,
+    }
+    if test_sample_size is not None:
+        hyperparameters["test_sample_size"] = test_sample_size
+    if skip_addition:
+        hyperparameters["skip_addition"] = "true"
     estimator = PyTorch(
         entry_point="sagemaker_tier1/entrypoint_tier1.py",
         source_dir=source_dir,
@@ -106,11 +115,7 @@ def launch(source_lang: str, target_langs: str, max_run_hours: float, session: s
             "HF_TOKEN": hf_token(),
             "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         },
-        hyperparameters={
-            "model_path": model_path,
-            "source_lang": source_lang,
-            "target_langs": target_langs,
-        },
+        hyperparameters=hyperparameters,
     )
     estimator.fit(wait=False)
     print(f"[{source_lang}] submitted: {estimator.latest_training_job.name} (model={model_path})")
@@ -124,6 +129,10 @@ def main():
     p.add_argument("--max_run_hours", type=float, default=8.0)
     p.add_argument("--instance_type", default=DEFAULT_INSTANCE_TYPE)
     p.add_argument("--model_path", default=DEFAULT_MODEL_PATH)
+    p.add_argument("--test_sample_size", type=int, default=None,
+                    help="Subsample each language's 572-prompt test set to this many (fixed seed). Unset = full 572.")
+    p.add_argument("--skip_addition", action="store_true",
+                    help="Skip the activation-addition completions/eval (Figure 3, out of Tier-1 scope) to cut ~1/3 of the compute.")
     args = p.parse_args()
 
     session = sagemaker.Session(boto_session=boto3.Session(region_name=REGION))
@@ -133,7 +142,7 @@ def main():
 
     jobs = []
     for source_lang in args.source_langs.split(","):
-        jobs.append(launch(source_lang.strip(), args.target_langs, args.max_run_hours, session, source_dir, args.instance_type, args.model_path))
+        jobs.append(launch(source_lang.strip(), args.target_langs, args.max_run_hours, session, source_dir, args.instance_type, args.model_path, args.test_sample_size, args.skip_addition))
 
     print("\nAll jobs submitted (wait=False). Job names:")
     for e in jobs:

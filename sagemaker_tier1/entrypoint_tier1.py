@@ -119,7 +119,19 @@ def main():
     p.add_argument("--model_path", default="google/gemma-2b-it")
     p.add_argument("--source_lang", required=True)
     p.add_argument("--target_langs", required=True, help="comma-separated language codes")
+    # Cost-control knobs (see scripts/multi_test.py's guarded opt-in and
+    # CHANGES.md): default None/False here too, so running this file
+    # directly with no flags matches official full-scale behavior.
+    p.add_argument("--test_sample_size", type=int, default=None,
+                    help="If set, subsample each language's 572-prompt test set to this many (fixed seed=cfg.random_seed). Unset = full 572, official behavior.")
+    # NOTE: SageMaker's PyTorch estimator always invokes the entry point as
+    # `--key value` for every hyperparameter (it doesn't support bare flags),
+    # so this takes an explicit string rather than being a store_true flag,
+    # which would break under that invocation style.
+    p.add_argument("--skip_addition", type=str, default="false",
+                    help="'true' to skip generating/evaluating the activation-addition completions (Figure 3, not part of Tier-1's ablation-only scope). Default 'false': generate them, official behavior.")
     args = p.parse_args()
+    args.skip_addition = args.skip_addition.lower() in ("true", "1", "yes")
 
     pip_install_missing()
 
@@ -152,6 +164,10 @@ def main():
         eval_cfg.lang = target
         eval_cfg.source_lang = args.source_lang
         eval_cfg.artifact_path = f"output/tier1_crosslingual/{model_alias}/{args.source_lang}/{target}"
+        if args.test_sample_size is not None:
+            eval_cfg.test_sample_size = args.test_sample_size
+        if args.skip_addition:
+            eval_cfg.skip_addition = True
         eval_tmp = tempfile.mktemp(suffix=".yaml")
         eval_cfg.dump(eval_tmp)
         try:

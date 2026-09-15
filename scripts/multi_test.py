@@ -99,11 +99,24 @@ def main(config_path):
     # data_test = load_dataset_split('jailbreakbench', split='test', lang=cfg.lang)
     # dataset_name = 'jailbreakbench'
 
+    # --- Opt-in cost-control knobs (see sagemaker_tier1/CHANGES.md) ---
+    # Both default to the ORIGINAL, unmodified behavior (full 572-prompt
+    # test set, all three completion variants) for anyone using this repo
+    # without setting them; only sagemaker_tier1/entrypoint_tier1.py sets
+    # them, to fit a fixed compute budget.
+    if cfg.get('test_sample_size'):
+        import random as _random
+        _random.seed(cfg.get('random_seed', 1))
+        data_test = _random.sample(data_test, min(cfg.test_sample_size, len(data_test)))
+    skip_addition = cfg.get('skip_addition', False)
 
     completions = model_base.generate_completions(data_test, fwd_pre_hooks=or_ablation_harm_actadd_fwd_pre_hooks, fwd_hooks=or_ablation_harm_actadd_fwd_hooks, max_new_tokens=512, batch_size=cfg.batch_size, system=None, translation=True if cfg.lang != 'en' else False)
     completions_baseline = model_base.generate_completions(data_test, fwd_pre_hooks=baseline_fwd_pre_hooks, fwd_hooks=baseline_fwd_hooks, max_new_tokens=512, batch_size=cfg.batch_size, system=None, translation=True if cfg.lang != 'en' else False)
 
-    completions_addition = model_base.generate_completions(data_test, fwd_pre_hooks=harm_actadd_fwd_pre_hooks, fwd_hooks=harm_actadd_fwd_hooks, max_new_tokens=512, batch_size=cfg.batch_size, system=None, translation=True if cfg.lang != 'en' else False)
+    if not skip_addition:
+        completions_addition = model_base.generate_completions(data_test, fwd_pre_hooks=harm_actadd_fwd_pre_hooks, fwd_hooks=harm_actadd_fwd_hooks, max_new_tokens=512, batch_size=cfg.batch_size, system=None, translation=True if cfg.lang != 'en' else False)
+    else:
+        completions_addition = []
     
     intervention_label = cfg.mode
     
@@ -158,8 +171,9 @@ def main(config_path):
     with open(f'{cfg.artifact_path}/completions/{dataset_name}_baseline_completions.json', "w") as f:
         json.dump(completions_baseline, f, indent=4)
         
-    with open(f'{cfg.artifact_path}/completions/{dataset_name}_{intervention_label}_addition_completions.json', "w") as f:
-        json.dump(completions_addition, f, indent=4)
+    if not skip_addition:
+        with open(f'{cfg.artifact_path}/completions/{dataset_name}_{intervention_label}_addition_completions.json', "w") as f:
+            json.dump(completions_addition, f, indent=4)
 
     # clear the gpu 
     torch.cuda.empty_cache()
@@ -192,16 +206,17 @@ def main(config_path):
         
         
     
-    evaluation = evaluate_jailbreak(
-            completions=completions_addition,
-            methodologies=cfg.jailbreak_eval_methodologies,
-            evaluation_path=os.path.join(cfg.artifact_path, "completions", f"{dataset_name}_{intervention_label}_addition_evaluations.json"),
-            translation=True if cfg.lang != 'en' else False,
-            cfg = cfg,
-            logger=logger       
-        )
-    with open(f'{cfg.artifact_path}/completions/{dataset_name}_{intervention_label}_addition_evaluations.json', "w") as f:
-        json.dump(evaluation, f, indent=4)  
+    if not skip_addition:
+        evaluation = evaluate_jailbreak(
+                completions=completions_addition,
+                methodologies=cfg.jailbreak_eval_methodologies,
+                evaluation_path=os.path.join(cfg.artifact_path, "completions", f"{dataset_name}_{intervention_label}_addition_evaluations.json"),
+                translation=True if cfg.lang != 'en' else False,
+                cfg = cfg,
+                logger=logger
+            )
+        with open(f'{cfg.artifact_path}/completions/{dataset_name}_{intervention_label}_addition_evaluations.json', "w") as f:
+            json.dump(evaluation, f, indent=4)
     
 
     

@@ -10,7 +10,48 @@ from the official repo be recorded rather than assumed.
 
 Tier-1 replication (English/German/Chinese/Thai refusal-direction
 extraction, cross-lingual ablation across all 14 PolyRefuse languages).
-Budget ceiling: $100 total AWS spend.
+Budget ceiling: $100 total AWS spend, additionally capped at ~5 GPU-hours
+total wall time by user request.
+
+## Cost-control changes to scripts/multi_test.py
+
+The full sweep is 4 source languages × 14 target languages = 56 (source,
+target) pairs, each originally generating 3 completion variants (baseline,
+ablation, activation-addition) over the full 572-prompt PolyRefuse test set
+per language, then scoring every one with WildGuard — whose own evaluator
+(`evaluators/wildguard.py`) scores completions **one at a time** in a plain
+Python loop, not batched, and is likely the dominant cost, independent of
+which model generated the text. That workload doesn't fit a 5 GPU-hour
+target, so two **opt-in, backward-compatible** knobs were added to
+`scripts/multi_test.py`'s `main()`:
+
+- `cfg.test_sample_size` (int, default unset): when set, subsamples each
+  language's 572-prompt test set down to this many prompts, seeded with
+  `cfg.random_seed` for reproducibility. Unset (the default for anyone
+  using this repo without setting it) keeps the original full 572.
+- `cfg.skip_addition` (bool, default `False`): when `True`, skips
+  generating and evaluating the activation-addition completions entirely
+  (Figure 3 in the paper — vector addition, not ablation). This wasn't in
+  Tier-1's scope to begin with (Tier-1 = Figures 1 & 2, ablation only), so
+  skipping it costs nothing in coverage of what was actually asked for, and
+  cuts roughly 1/3 of the generation + WildGuard-scoring work per pair.
+
+Both default to the exact original behavior — running `scripts/multi_test.py`
+normally, without setting either field, is unaffected. Only
+`sagemaker_tier1/entrypoint_tier1.py`'s own CLI flags
+(`--test_sample_size`, `--skip_addition`) set them, for this replication's
+runs specifically. This is a real edit to official code (not just deploy
+glue in `sagemaker_tier1/`), made because there was no way to hit the
+stated 5-GPU-hour budget otherwise; flagging it prominently here rather
+than folding it in quietly.
+
+**Statistical-power caveat**: subsampling to N prompts means each
+language's reported compliance rate has correspondingly higher variance
+than the paper's own 572-prompt figures — this is a real trade-off for
+fitting the budget, not a free lunch. The actual sample size used, and the
+real measured GPU-hours it took, are recorded here once the smoke test
+establishes real per-pair timing (rather than guessed from the Qwen-based
+estimate, which doesn't directly transfer to gemma-2b-it + WildGuard).
 
 **Model: `google/gemma-2b-it`**, switched from the originally-planned
 `Qwen/Qwen2.5-7B-Instruct` after real infrastructure testing (see "Model
