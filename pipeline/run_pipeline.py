@@ -14,7 +14,14 @@ from pipeline.submodules.generate_directions import generate_directions
 from pipeline.submodules.select_direction import select_direction, get_refusal_scores, randomly_select_direction
 from pipeline.submodules.evaluate_jailbreak import evaluate_jailbreak
 from pipeline.submodules.evaluate_loss import evaluate_loss
-from pipeline.evaluator.evalharness import LMEvalHarness
+# LMEvalHarness is imported lazily, inside eval_harness() below, instead of
+# here at module level -- it requires lm_eval (the LM Evaluation Harness),
+# which per this repo's own README is installed separately from source
+# ("cd lm-evaluation-harness && pip install -e ."), not via requirements.txt.
+# Importing it eagerly means simply `from pipeline.run_pipeline import
+# run_pipeline` fails with ModuleNotFoundError for anyone who hasn't done
+# that separate install step, even if they never call eval_harness(). See
+# sagemaker_tier1/CHANGES.md.
 
 import mmengine
 from pipeline.utils.hook_utils import add_hooks
@@ -189,7 +196,8 @@ def evaluate_loss_for_datasets(cfg, model_base, fwd_pre_hooks, fwd_hooks, interv
 
 
 def eval_harness(cfg, model_base, identifier):
-    
+    from pipeline.evaluator.evalharness import LMEvalHarness  # lazy import, see module-level note
+
     eval_harness_evaluator_mmlu = LMEvalHarness(cfg.eval_harness_mmlu)
     lm_eval_results_mmlu = eval_harness_evaluator_mmlu.evaluate(
         model=model_base
@@ -359,8 +367,17 @@ def run_pipeline(config_path, model_path, batch_size):
     # with add_hooks(module_forward_pre_hooks=baseline_fwd_pre_hooks, module_forward_hooks=baseline_fwd_hooks):
     #     lm_eval_results_baseline = eval_harness(cfg, model_base, 'baseline')
     #     # save results
-    with add_hooks(module_forward_pre_hooks=harm_ablation_fwd_pre_hooks, module_forward_hooks=harm_ablation_fwd_hooks):
-        lm_eval_results_harm_actadd = eval_harness(cfg, model_base, 'harm_ablation')
+    # Opt-in skip (see sagemaker_tier1/CHANGES.md): default (unset) preserves
+    # original behavior for anyone using this repo without setting it. This
+    # MMLU/wikitext/truthfulqa/arc_challenge capability check via lm_eval is
+    # orthogonal to Tier-1's actual target (Figures 1 & 2's ablation
+    # results, already gated by select_direction's own KL-divergence
+    # filter) and requires a separate lm-evaluation-harness install
+    # (`cd lm-evaluation-harness && pip install -e .` per the README) that
+    # this fork's requirements.txt does not provide.
+    if not cfg.get('skip_eval_harness', False):
+        with add_hooks(module_forward_pre_hooks=harm_ablation_fwd_pre_hooks, module_forward_hooks=harm_ablation_fwd_hooks):
+            lm_eval_results_harm_actadd = eval_harness(cfg, model_base, 'harm_ablation')
 
     
     

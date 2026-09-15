@@ -200,6 +200,28 @@ openai>=1.0. Confirmed and fixed locally, for free, before touching
 SageMaker again: unpinning both lets pip co-resolve a mutually compatible
 modern pair.)
 
+## Additional edit to pipeline/run_pipeline.py: skip the lm_eval MMLU check
+
+`run_pipeline()` unconditionally calls `eval_harness()` at the very end
+(outside both the baseline/ablation branches), which runs an
+MMLU/wikitext/truthfulqa/arc_challenge capability check via `lm_eval` (the
+LM Evaluation Harness). Per this repo's own README, `lm_eval` is installed
+separately from source (`cd lm-evaluation-harness && pip install -e .`),
+not via `requirements.txt` — confirmed via failed job
+`mr-tier1-en-2026-09-15-01-20-46-536`:
+`ModuleNotFoundError: No module named 'lm_eval'`. `LMEvalHarness` was also
+imported at module level in both `pipeline/run_pipeline.py` and
+`pipeline/evaluator/evalharness.py`, so merely importing
+`pipeline.run_pipeline` failed regardless of whether `eval_harness()` was
+ever called. Both imports moved to be local to `eval_harness()` (same
+lazy-import treatment as the vllm/litellm fix above), and a `cfg.
+skip_eval_harness` opt-in flag (default `False`, preserving original
+behavior) added around the call itself — `entrypoint_tier1.py` sets it to
+`True`. This check is orthogonal to Tier-1's actual target (Figures 1 &
+2's ablation results, already gated by `select_direction`'s own
+KL-divergence filter) and would cost extra compute against the 5 GPU-hour
+budget for no Tier-1-relevant output.
+
 ## What was intentionally NOT changed
 
 - No changes to `pipeline/utils/*.py`, `pipeline/model_utils/*.py`,

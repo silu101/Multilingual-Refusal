@@ -122,6 +122,13 @@ def build_source_config(model_path: str, source_lang: str, model_alias: str) -> 
         f"pipeline/runs/{model_alias}" if source_lang == "en"
         else f"pipeline/runs/{model_alias}/{source_lang}"
     )
+    # run_pipeline() unconditionally runs an MMLU/wikitext/truthfulqa/
+    # arc_challenge capability check via lm_eval at the end, regardless of
+    # this cfg's other settings -- see pipeline/run_pipeline.py's own
+    # skip_eval_harness guard for the full rationale. Not part of Tier-1's
+    # scope (Figures 1 & 2) and requires a separate install this fork's
+    # requirements.txt doesn't provide.
+    cfg.skip_eval_harness = True
     return cfg
 
 
