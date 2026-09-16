@@ -59,13 +59,28 @@ def _write(records, out_dir, name):
     print(f"Wrote {len(records)} items -> {path}")
 
 
-def fetch_jailbreakllms_wrapped(load_dataset, n_wrapped=100, seed=1, goals_path=None):
+def fetch_jailbreakllms_wrapped(load_dataset, n_wrapped=100, seed=1, goals_path=None, max_template_chars=1500):
     """Pairs held-out AdvBench goals 1:1 with a sample of placeholder
     templates (not a full cross product, to keep the eval set a comparable
-    size to the other OOD sets)."""
+    size to the other OOD sets).
+
+    max_template_chars filters out unusually long templates before pairing.
+    Real distribution (checked against live data): of the 94 templates with
+    an explicit placeholder, lengths range 260-6499 chars (median ~1812,
+    mean ~2106). Confirmed necessary via a real failure: even at
+    generation_batch_size=2, gemma's prefill logit computation
+    (proportional to prompt_length x vocab_size, and Gemma's vocab is
+    ~256k) OOM'd on job mr-ood-attack-2026-09-16-11-11-34-844 on this
+    dataset specifically -- a single long template can exceed available
+    memory regardless of how small the batch is, so this needed to be a
+    length filter, not another batch-size reduction. 1500 chars keeps 37 of
+    94 templates (verified against live data), comfortably enough for a
+    n_wrapped=50 sample."""
     ds = load_dataset("TrustAIRLab/in-the-wild-jailbreak-prompts", "jailbreak_2023_12_25", split="train")
-    templates = [row["prompt"] for row in ds if PLACEHOLDER in row["prompt"]]
-    print(f"  {len(templates)} of {len(ds)} in-the-wild templates have an explicit {PLACEHOLDER!r} insertion point")
+    all_templates = [row["prompt"] for row in ds if PLACEHOLDER in row["prompt"]]
+    templates = [t for t in all_templates if len(t) <= max_template_chars]
+    print(f"  {len(all_templates)} of {len(ds)} in-the-wild templates have an explicit {PLACEHOLDER!r} insertion point; "
+          f"{len(templates)} of those are <= {max_template_chars} chars")
 
     goals_path = goals_path or os.path.join(REPO_ROOT, "dataset", "processed", "advbench.json")
     with open(goals_path) as f:
