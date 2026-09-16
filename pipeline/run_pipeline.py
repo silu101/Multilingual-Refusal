@@ -342,6 +342,7 @@ def run_pipeline(config_path, model_path, batch_size):
         
         for dataset_name in cfg.jailbreak_evaluation_datasets:
             evaluate_completions_and_save_results_for_dataset(cfg, 'harm_ablation', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+            torch.cuda.empty_cache()  # same fix as scripts/multi_test.py's evaluate_jailbreak() calls -- see CHANGES.md
         # for dataset_name in cfg.over_refusal_evaluation_datasets:
         #     evaluate_completions_and_save_results_for_dataset(cfg, 'harm_ablation', dataset_name, eval_methodologies=cfg.refusal_eval_methodologies)
         
@@ -359,7 +360,8 @@ def run_pipeline(config_path, model_path, batch_size):
         # generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'oktest_100', system = cfg.system)
         generate_and_save_completions_for_dataset(cfg, model_base, baseline_fwd_pre_hooks, baseline_fwd_hooks, 'baseline', 'jailbreakbench', system = cfg.system)
         for dataset_name in cfg.jailbreak_evaluation_datasets:
-            evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies) 
+            evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.jailbreak_eval_methodologies)
+            torch.cuda.empty_cache()  # same fix as the 'harm_ablation' loop above -- see CHANGES.md
         # for dataset_name in cfg.over_refusal_evaluation_datasets:
         #     evaluate_completions_and_save_results_for_dataset(cfg, 'baseline', dataset_name, eval_methodologies=cfg.refusal_eval_methodologies)
 

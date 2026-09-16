@@ -285,8 +285,17 @@ def main(config_path):
 
     with open(f'{cfg.artifact_path}/completions/{dataset_name}_{intervention_label}_evaluations.json', "w") as f:
         json.dump(evaluation, f, indent=4)
-        
-        
+
+    # The existing "clear the gpu" call above (before the first
+    # evaluate_jailbreak()) only covers generation's leftover memory --
+    # there was no equivalent clear between this evaluate_jailbreak() call
+    # and the next one, even though each one runs a full WildGuard scoring
+    # pass over test_sample_size completions. Confirmed necessary: job
+    # mr-tier1-en-2026-09-16-11-23-36-300 OOM'd inside WildGuard's own
+    # forward pass (modeling_mistral.py) at test_sample_size=250, between
+    # the ablation and baseline evaluate_jailbreak() calls.
+    torch.cuda.empty_cache()
+
     evaluation = evaluate_jailbreak(
             completions=completions_baseline,
             methodologies=cfg.jailbreak_eval_methodologies,
@@ -303,6 +312,7 @@ def main(config_path):
         
     
     if not skip_addition:
+        torch.cuda.empty_cache()  # same reasoning as the clear above, between this evaluate_jailbreak() call and the previous one
         evaluation = evaluate_jailbreak(
                 completions=completions_addition,
                 methodologies=cfg.jailbreak_eval_methodologies,
