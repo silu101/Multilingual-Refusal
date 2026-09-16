@@ -204,4 +204,15 @@ Answers: [/INST]
                     'response_harmful': response_harmful
                 }
 
+            # Confirmed necessary, not just belt-and-suspenders: the
+            # per-evaluate_jailbreak()-call clears added in
+            # scripts/multi_test.py and pipeline/run_pipeline.py were not
+            # enough on their own -- job mr-tier1-en-2026-09-16-12-02-46-402
+            # hit the exact same 480MiB OutOfMemoryError inside this
+            # function a second time, meaning the CUDA allocator can
+            # fragment *within* one evaluate_all() call too, across its own
+            # internal batches (e.g. ~11 batches for a 250-item test set at
+            # wildguard_batch_size=24), not just between separate calls.
+            torch.cuda.empty_cache()
+
         return completions
