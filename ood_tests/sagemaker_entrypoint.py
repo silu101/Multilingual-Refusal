@@ -54,6 +54,8 @@ def main():
     p.add_argument("--n_ood_sample", type=int, default=100)
     p.add_argument("--wildguard_batch_size", type=int, default=8)
     p.add_argument("--fetch_limit", type=int, default=None, help="Cap each fetched dataset to this many items (smoke-test scope).")
+    p.add_argument("--generation_batch_size", type=int, default=None,
+                    help="Overrides cfg.batch_size for model generation. OOD prompts (esp. jailbreakllms_wrapped, ~500-word DAN templates) are much longer and more variable than Tier-1's curated PolyRefuse set -- confirmed via a real OOM (job mr-ood-semantic-2026-09-16-09-53-21-664, gemma's MLP forward pass) at the template's default batch_size=64. Unset = that default.")
     args = p.parse_args()
 
     pip_install_missing()
@@ -80,6 +82,8 @@ def main():
         "--n_ood_sample", str(args.n_ood_sample),
         "--wildguard_batch_size", str(args.wildguard_batch_size),
     ]
+    if args.generation_batch_size:
+        eval_cmd += ["--generation_batch_size", str(args.generation_batch_size)]
     run(eval_cmd)
 
     model_dir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")

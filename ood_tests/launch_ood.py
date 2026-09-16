@@ -59,6 +59,8 @@ def main():
     p.add_argument("--n_ood_sample", type=int, default=100)
     p.add_argument("--wildguard_batch_size", type=int, default=8)
     p.add_argument("--fetch_limit", type=int, default=None, help="Cap each fetched dataset (smoke-test scope).")
+    p.add_argument("--generation_batch_size", type=int, default=None,
+                    help="Overrides cfg.batch_size for model generation. See sagemaker_entrypoint.py's help text -- OOD prompts are longer/more variable than Tier-1's, confirmed to OOM at the template's default 64.")
     p.add_argument("--max_run_hours", type=float, default=2.0)
     args = p.parse_args()
 
@@ -75,6 +77,8 @@ def main():
     }
     if args.fetch_limit:
         hyperparameters["fetch_limit"] = args.fetch_limit
+    if args.generation_batch_size:
+        hyperparameters["generation_batch_size"] = args.generation_batch_size
 
     estimator = PyTorch(
         entry_point="ood_tests/sagemaker_entrypoint.py",
