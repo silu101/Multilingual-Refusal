@@ -24,7 +24,8 @@ SPLIT_DATASET_MULTI_FILENAME = os.path.join(dataset_dir_path, 'splits_multi/{har
 # that one directly by filename rather than via load_dataset("maliciousinstruct").
 PROCESSED_DATASET_NAMES = ["advbench", "tdc2023", "maliciousinstruct", "harmbench_val", "harmbench_test", "jailbreakbench", "strongreject", "alpaca", "over_refusal", "xstest", "oktest", "oktest_100", "xstest_unsafe",  "xstest_safe",
                             "beavertails", "anthropic_redteam", "openai_moderation", "aegis2", "simplesafetytests",
-                            "harmbench_test_deduped"]
+                            "harmbench_test_deduped",
+                            "jailbreakllms_wrapped", "wildjailbreak_adversarial"]
 
 def load_dataset_split(harmtype: str, split: str, lang: str='en', instructions_only: bool=False):
     assert harmtype in HARMTYPES
