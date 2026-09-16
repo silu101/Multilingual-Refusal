@@ -98,7 +98,7 @@ def pip_install_missing(max_attempts: int = 3):
     raise last_err
 
 
-def build_source_config(model_path: str, source_lang: str, model_alias: str, n_val: int = None, n_train: int = None) -> "mmengine.Config":
+def build_source_config(model_path: str, source_lang: str, model_alias: str, n_val: int = None, n_train: int = None, generation_batch_size: int = None) -> "mmengine.Config":
     import mmengine  # see module-level note: installed at runtime, imported locally
     # Prefer a model-and-language-specific template if one is already
     # checked in (de/ja/ko/ru/th/yo/zh have one for Qwen2.5-7B-Instruct from
@@ -144,6 +144,16 @@ def build_source_config(model_path: str, source_lang: str, model_alias: str, n_v
         cfg.n_val = n_val
     if n_train is not None:
         cfg.n_train = n_train
+    # cfg.batch_size governs model_base.generate_completions()'s generation
+    # batch size (unrelated to wildguard_batch_size, which only affects
+    # WildGuard's own scoring loop). Confirmed via a real OOM
+    # (job mr-tier1-en-2026-09-16-10-33-06-529, gemma's forward pass during
+    # generate()) that raising test_sample_size from 100->250 increases the
+    # chance of a batch landing on an unusually-long run of PolyRefuse
+    # prompts at the template's default batch_size=64 -- this override
+    # exists for the same reason ood_tests/run_ood_eval.py already has one.
+    if generation_batch_size is not None:
+        cfg.batch_size = generation_batch_size
     return cfg
 
 
@@ -169,6 +179,8 @@ def main():
                     help="Override cfg.n_val (official default 32) for the direction-selection sweep. Unset = template default.")
     p.add_argument("--n_train", type=int, default=None,
                     help="Override cfg.n_train (official default 128) for direction extraction. Unset = template default.")
+    p.add_argument("--generation_batch_size", type=int, default=None,
+                    help="Override cfg.batch_size (official default 64) for model generation. Confirmed necessary at larger test_sample_size (real OOM on job mr-tier1-en-2026-09-16-10-33-06-529). Unset = template default.")
     args = p.parse_args()
     args.skip_addition = args.skip_addition.lower() in ("true", "1", "yes")
 
@@ -180,7 +192,7 @@ def main():
     from scripts.multi_test import main as multi_test_main
 
     model_alias = os.path.basename(args.model_path)
-    cfg = build_source_config(args.model_path, args.source_lang, model_alias, n_val=args.n_val, n_train=args.n_train)
+    cfg = build_source_config(args.model_path, args.source_lang, model_alias, n_val=args.n_val, n_train=args.n_train, generation_batch_size=args.generation_batch_size)
     cfg.wildguard_batch_size = args.wildguard_batch_size
     tmp_cfg_path = tempfile.mktemp(suffix=".yaml")
     cfg.dump(tmp_cfg_path)
