@@ -236,6 +236,23 @@ def main():
             print(f"!!! FAILED source={args.source_lang} target={target}, continuing with remaining targets !!!", flush=True)
             traceback.print_exc()
             failures.append(target)
+        finally:
+            # Confirmed necessary: job mr-tier1-en-2026-09-16-11-00-02-956
+            # OOM'd on a 480MiB allocation (far smaller than the multi-GiB
+            # failures seen elsewhere this session) partway through a
+            # 3-target loop at test_sample_size=250 -- consistent with the
+            # CUDA caching allocator fragmenting across many sequential
+            # generate() calls within one long-running process, not any
+            # single batch being too large. Clearing the cache (and running
+            # a GC pass first, since Python-side references to completed
+            # tensors can otherwise keep them from being freed) between
+            # target-language iterations is the fix, not a smaller batch
+            # size -- multiple batch-size reductions this session did not
+            # resolve this class of failure.
+            import gc
+            import torch
+            gc.collect()
+            torch.cuda.empty_cache()
 
     model_dir = os.environ.get("SM_MODEL_DIR", "/opt/ml/model")
     for src, dst in [("pipeline/runs", "pipeline_runs"), ("output", "output")]:

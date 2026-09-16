@@ -206,6 +206,14 @@ def main():
         )
         r = results[name]
         print(f"    n={r['n']}  baseline={r['baseline_compliance']:.3f}  ablated={r['ablated_compliance']:.3f}  lift={r['lift']:+.3f}")
+        # Same fix applied to sagemaker_tier1/entrypoint_tier1.py's
+        # per-target loop, for the same reason: CUDA allocator
+        # fragmentation across many sequential generate() calls within one
+        # long-running process, confirmed there via a small (480MiB)
+        # allocation failure that smaller batch sizes alone didn't fix.
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
 
     results_path = os.path.join(cfg.artifact_path, "ood_results.json")
     with open(results_path, "w") as f:
