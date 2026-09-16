@@ -98,7 +98,7 @@ def pip_install_missing(max_attempts: int = 3):
     raise last_err
 
 
-def build_source_config(model_path: str, source_lang: str, model_alias: str) -> "mmengine.Config":
+def build_source_config(model_path: str, source_lang: str, model_alias: str, n_val: int = None, n_train: int = None) -> "mmengine.Config":
     import mmengine  # see module-level note: installed at runtime, imported locally
     # Prefer a model-and-language-specific template if one is already
     # checked in (de/ja/ko/ru/th/yo/zh have one for Qwen2.5-7B-Instruct from
@@ -129,6 +129,21 @@ def build_source_config(model_path: str, source_lang: str, model_alias: str) -> 
     # scope (Figures 1 & 2) and requires a separate install this fork's
     # requirements.txt doesn't provide.
     cfg.skip_eval_harness = True
+    # Opt-in override (default None = official template value, n_val=32,
+    # n_train=128 -- unchanged for anyone not setting these). Added after
+    # gemma-2b-it's en->de result looked inconsistent with the paper's
+    # reported Figure 1 number on a single run; select_direction's KL-gated
+    # layer/position sweep is validated on only n_val=32 harmful+32 harmless
+    # prompts, and different smoke-test runs were observed picking
+    # different (layer, position) pairs despite a fixed random_seed --
+    # consistent with a noisy selection process on a small model. Raising
+    # n_val (cheap: select_direction's sweep is forward-pass-only, no
+    # generation) gives that sweep more signal without the cost that
+    # raising test_sample_size would carry.
+    if n_val is not None:
+        cfg.n_val = n_val
+    if n_train is not None:
+        cfg.n_train = n_train
     return cfg
 
 
@@ -150,6 +165,10 @@ def main():
                     help="'true' to skip generating/evaluating the activation-addition completions (Figure 3, not part of Tier-1's ablation-only scope). Default 'false': generate them, official behavior.")
     p.add_argument("--wildguard_batch_size", type=int, default=1,
                     help="Completions per WildGuard generate() call (see evaluators/wildguard.py). Default 1 = original unbatched behavior.")
+    p.add_argument("--n_val", type=int, default=None,
+                    help="Override cfg.n_val (official default 32) for the direction-selection sweep. Unset = template default.")
+    p.add_argument("--n_train", type=int, default=None,
+                    help="Override cfg.n_train (official default 128) for direction extraction. Unset = template default.")
     args = p.parse_args()
     args.skip_addition = args.skip_addition.lower() in ("true", "1", "yes")
 
@@ -161,7 +180,7 @@ def main():
     from scripts.multi_test import main as multi_test_main
 
     model_alias = os.path.basename(args.model_path)
-    cfg = build_source_config(args.model_path, args.source_lang, model_alias)
+    cfg = build_source_config(args.model_path, args.source_lang, model_alias, n_val=args.n_val, n_train=args.n_train)
     cfg.wildguard_batch_size = args.wildguard_batch_size
     tmp_cfg_path = tempfile.mktemp(suffix=".yaml")
     cfg.dump(tmp_cfg_path)
